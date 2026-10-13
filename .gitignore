@@ -31,6 +31,8 @@ dist/
 # Downloaded model weights and training checkpoints
 /skyanchor_weights.zip
 /skyanchor_weights.zip.partial
+/skyanchor_weights.zip.sha256
+/skyanchor_weights_manifest.json
 *.pth
 *.pt
 *.ckpt
