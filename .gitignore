@@ -29,6 +29,8 @@ dist/
 *.swo
 
 # Downloaded model weights and training checkpoints
+/skyanchor_weights.zip
+/skyanchor_weights.zip.partial
 *.pth
 *.pt
 *.ckpt

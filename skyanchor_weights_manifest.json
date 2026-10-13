@@ -1,0 +1,73 @@
+{
+  "format_version": 1,
+  "extraction_root": "sky_anchor repository root",
+  "scope": "Third-party weights stored within agRecon, anchorRecon, and splatting; external model caches and Python environments are excluded.",
+  "excluded_files": [
+    {
+      "path": "agRecon/local/weights/skyseg.onnx",
+      "reason": "Existing file fails ONNX parsing and is not a usable model."
+    }
+  ],
+  "files": [
+    {
+      "path": "agRecon/local/weights/checkpoint-aerial-mast3r.pth",
+      "bytes": 8246081654,
+      "sha256": "21c33e85a2d87e16242437d78c49ce8de4a64ad821277b1b8520a749a4d0d078"
+    },
+    {
+      "path": "agRecon/local/weights/metric_depth_vit_giant2_800k.pth",
+      "bytes": 5510989187,
+      "sha256": "22d64c4dec098fa56eb17b6f22b1fb7d16b4742c66a9c8ee73e7dae61c0d2a1b"
+    },
+    {
+      "path": "agRecon/third_party/RoMa/pretrained/dinov2_vitl14_pretrain.pth",
+      "bytes": 1217586395,
+      "sha256": "d5383ea8f4877b2472eb973e0fd72d557c7da5d3611bd527ceeb1d7162cbf428"
+    },
+    {
+      "path": "agRecon/third_party/RoMa/pretrained/roma_outdoor.pth",
+      "bytes": 445647516,
+      "sha256": "c7a45c80d41ad788a63c641d1b686d7cb3f297f40097c6f4e75039889e5cc8ba"
+    },
+    {
+      "path": "agRecon/third_party/Sky-Segmentation-and-Post-processing/EGE_165.ncnn(1).bin",
+      "bytes": 222368,
+      "sha256": "1e7477fafe35023bdde237d18f0b3db66d7466fd162546ca0846ff3fc0c1b806"
+    },
+    {
+      "path": "agRecon/third_party/Sky-Segmentation-and-Post-processing/EGE_165.ncnn.bin",
+      "bytes": 222368,
+      "sha256": "1e7477fafe35023bdde237d18f0b3db66d7466fd162546ca0846ff3fc0c1b806"
+    },
+    {
+      "path": "agRecon/third_party/Sky-Segmentation-and-Post-processing/skysegsmall_sim-opt-fp16(1).bin",
+      "bytes": 2257156,
+      "sha256": "ff1e18f71dc0a0cf8a56b634c59f68d296deffd015cbed27a6d5e302f991faf2"
+    },
+    {
+      "path": "agRecon/third_party/Sky-Segmentation-and-Post-processing/skysegsmall_sim-opt-fp16.bin",
+      "bytes": 2257156,
+      "sha256": "ff1e18f71dc0a0cf8a56b634c59f68d296deffd015cbed27a6d5e302f991faf2"
+    },
+    {
+      "path": "agRecon/third_party/SuperGluePretrainedNetwork/models/weights/superglue_indoor.pth",
+      "bytes": 48233807,
+      "sha256": "0e710469be25ebe1e2ccf68edcae8b2945b0617c8e7e68412251d9d47f5052b1"
+    },
+    {
+      "path": "agRecon/third_party/SuperGluePretrainedNetwork/models/weights/superglue_outdoor.pth",
+      "bytes": 48233807,
+      "sha256": "2f5f5e9bb3febf07b69df633c4c3ff7a17f8af26a023aae2b9303d22339195bd"
+    },
+    {
+      "path": "agRecon/third_party/SuperGluePretrainedNetwork/models/weights/superpoint_v1.pth",
+      "bytes": 5206086,
+      "sha256": "52b6708629640ca883673b5d5c097c4ddad37d8048b33f09c8ca0d69db12c40e"
+    },
+    {
+      "path": "splatting/submodules/SkyRemoval/model/model.onnx",
+      "bytes": 193874108,
+      "sha256": "220ec12347039f9d02f7376e31d4abf088020a9336cd614329996112e2066d7b"
+    }
+  ]
+}

@@ -1,4 +1,6 @@
-# SkyAnchor
+# SkyAnchor: Updating Metric-scale Aerial 3D Gaussian Scenes from Unposed Ground-View Sequences
+
+**SIGGRAPH Asia 2026** · [Paper (arXiv)](https://arxiv.org/abs/2609.13903) · [PDF](https://arxiv.org/pdf/2609.13903)
 
 **Preview version.** This repository provides an early release of SkyAnchor, organized into three components: aerial–ground anchor registration (`agRecon`), ground pose reconstruction (`anchorRecon`), and Gaussian Splatting (`splatting`). The preview includes the updates described below; further reconstruction speed improvements are planned for the final release.
 
@@ -198,6 +200,35 @@ The CPU ONNX Runtime package is sufficient for sky-mask inference. To use its CU
 ### Model weights
 
 Python packages and pretrained model weights are separate dependencies.
+
+The repository weight bundle is distributed separately from Git:
+
+| File | Description |
+| --- | --- |
+| `skyanchor_weights.zip` | 12 weight files; **13.60 GiB** compressed and **14.64 GiB** extracted. |
+| `skyanchor_weights.zip.sha256` | SHA-256 checksum for verifying the downloaded ZIP. |
+| `skyanchor_weights_manifest.json` | Relative paths, sizes, and SHA-256 checksums for individual weights; also included in the ZIP. |
+
+The bundle contains aerial MASt3R, Metric3D, RoMa/DINOv2, SuperPoint/SuperGlue, NCNN sky-segmentation weights, and the SkyRemoval ONNX model. Allow approximately **29 GiB** of free space to keep both the downloaded ZIP and the extracted weights, in addition to space needed for datasets and training outputs.
+
+To install the separately distributed repository weights, download `skyanchor_weights.zip` into the repository root and extract it there:
+
+```bash
+cd /path/to/sky_anchor
+unzip -o skyanchor_weights.zip
+```
+
+The ZIP preserves paths such as `agRecon/local/weights/checkpoint-aerial-mast3r.pth` and `splatting/submodules/SkyRemoval/model/model.onnx`, so no manual file placement is required. It contains actual weight files, including the contents of local symbolic links, rather than links to the original machine. Extraction overwrites existing files at these paths. Use a ZIP64-capable extractor because some weights exceed 4 GiB.
+
+The archive includes only weights stored in `agRecon`, `anchorRecon`, and `splatting`; it does not include Conda environments, PyTorch packages, user-level model caches, or training outputs. There are currently no weight files stored inside `anchorRecon`: LoMa and its backbone use an external model cache and still require their initial downloads. Other cache-based models, including RoMaV2 and AnyLoc, also require downloads unless already cached. This archive alone is not a complete offline installation.
+
+The included `skyanchor_weights_manifest.json` records each file's relative path, size, and SHA-256 checksum. If the companion checksum file is available, verify the downloaded archive before extraction:
+
+```bash
+sha256sum -c skyanchor_weights.zip.sha256
+```
+
+The legacy `agRecon/local/weights/skyseg.onnx` is excluded because the available file fails ONNX parsing. The bundle includes the valid SkyRemoval model at `splatting/submodules/SkyRemoval/model/model.onnx`. AG configurations that explicitly use the legacy sky-segmentation model require a separate valid copy.
 
 | Module | Required assets |
 | --- | --- |
