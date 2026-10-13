@@ -698,13 +698,14 @@ Run the suites separately in the shared `skyanchor` environment:
 conda activate skyanchor
 cd "$SKYANCHOR_ROOT"
 python -m pip install pytest
-python -m pytest -q tests/test_runner.py
-python -m pytest -q anchorRecon/tests/test_pose_pipeline.py
+PYTHONPATH="$SKYANCHOR_ROOT/anchorRecon" python -m pytest -q anchorRecon/tests/test_pose_pipeline.py
 python -m pytest -q splatting/tests
 ```
 
-These checks cover orchestration, anchor/model handoff, input preparation, and camera projection. They do not replace a full reconstruction or training run on your own scene.
+These checks cover anchor/model handoff, input preparation, Gaussian initialization, stage scheduling, parameter freezing, and camera projection. They do not replace a full reconstruction or training run on your own scene.
 
 ## Third-party components
 
 SkyAnchor incorporates third-party reconstruction, matching, segmentation, and Gaussian rendering components. Refer to the licenses and documentation in `agRecon`, `anchorRecon/submodules`, and `splatting/submodules` for their respective usage conditions and acknowledgments.
+
+Upstream demo images, videos, notebooks, and bundled papers are omitted from this distribution. Obtain these resources from the original third-party projects if you want to run their standalone demos.
