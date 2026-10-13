@@ -1,0 +1,14 @@
+# Install a CUDA-compatible torch/torchvision pair for the target machine.
+torch
+torchvision
+numpy
+opencv-python
+Pillow
+tqdm
+scipy
+# Tested locally with pycolmap 3.12.0.dev0, pyceres 2.5, viser 0.2.7.
+# Keep the existing pycolmap build in the skyanchor environment.
+pycolmap
+pyceres
+viser
+./submodules/LoMa

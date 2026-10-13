@@ -1,0 +1,6 @@
+output: romav2_matcher
+model:
+  name: roma_v2
+type: dense
+resize: null
+sample_num: 5000

@@ -1,0 +1,62 @@
+# Python and test caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# Local build products
+build/
+dist/
+*.egg-info/
+.deps/
+
+# Pipeline outputs and local experiment artifacts
+/outputs/
+/anchorRecon/output/
+/splatting/output/
+/splatting/dense_v2.ply
+/agRecon/local/weights/
+/agRecon/local/cache/
+
+# Local backup copies
+/anchorRecon_backup_*/
+/splatting_backup_*/
+
+# Editor and OS metadata
+.DS_Store
+*.swp
+*.swo
+
+# Downloaded model weights and training checkpoints
+*.pth
+*.pt
+*.ckpt
+*.onnx
+*.safetensors
+
+# Compiled extensions and intermediate objects
+*.so
+*.o
+*.a
+*.ninja
+.ninja_*
+CMakeFiles/
+CMakeCache.txt
+
+# Runtime caches, logs, and local environments
+.cache/
+.mypy_cache/
+*.log
+events.out.tfevents.*
+wandb/
+.venv/
+.env
+.env.*
+!.env.example
+
+# Third-party generated demos and duplicate papers
+/agRecon/third_party/DSINE/paper*.pdf
+/agRecon/third_party/Sky-Segmentation-and-Post-processing/output*.gif
+/agRecon/third_party/Sky-Segmentation-and-Post-processing/result_compare/
+/agRecon/third_party/Sky-Segmentation-and-Post-processing/eval/

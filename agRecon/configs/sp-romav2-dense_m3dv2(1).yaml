@@ -1,0 +1,4 @@
+# unique config: uses depth maps direclty extracted by matcher. here we match superpoint features with mast3r
+extractors:
+  matcher: romav2
+matches_mode: sparse+dense

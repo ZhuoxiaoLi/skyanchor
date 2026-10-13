@@ -1,0 +1,6 @@
+output: global-feats-Salad
+model:
+  name: Salad
+preprocessing:
+  resize_max: 1024
+ImageDataset: AGS

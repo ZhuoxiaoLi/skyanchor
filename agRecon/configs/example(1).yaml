@@ -1,0 +1,35 @@
+# Untested config created to demonstrate how to write config files
+
+# import default configs to make sure depth estimators are used with correct uncertainties
+defaults: 
+  - defaults/depthpro # in this example we use depthpro
+
+reconstruction:
+  image:
+    depth:
+      depth_uncertainty: 0.2 # we can override the default uncertainty in defaults/depthpro.yaml (not recommended)
+    normals: 
+      flip_consistency: true # use flip consistency check for normals (see defaults in mpsfm/sfm/scene/image/normals.py)
+
+extractors:
+  # use dsine normals instead of metric3dv2 (default set in mpsfm/extraction/base.py)
+  # use "-fc" varient because we need flipped estimates for the "flip_consistency" check
+  normals: DSINE-kappa-fc 
+  matcher: roma_outdoor #change matcher
+# for dense matchers we can use any combination of sparse and dense by combining with "+"
+# for mast3r, you can additionally set "depth", e.g. "sparse+dense+depth"
+matches_mode: dense
+
+
+# change high level mapper logic:
+depth_consistency: false # removes depth consistency check
+integrate: false # disables depth optimization 
+int_covs: true # enebales optimized depth map uncertainty prop.
+
+# more advanced mapper options
+triangulator:
+  # avoids introducing 3D points with large errrors (during retriangulation) for images that observe 
+  # less than 120 3D points with track length<2 (defaults in mpsfm/sfm/mapper/triangulator.py)
+  nsafe_threshold: 120 
+  colmap_options:
+    min_angle: 0.1 # increase minimum trinagulation angle from defualt (defaults in mpsfm/sfm/mapper/triangulator.py)
