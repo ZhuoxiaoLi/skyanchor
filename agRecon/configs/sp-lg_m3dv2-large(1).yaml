@@ -1,2 +1,0 @@
-defaults: 
-  - defaults/m3dv2-large # see mpsfm/sfm/configs/defaults/m3dv2-large.yaml

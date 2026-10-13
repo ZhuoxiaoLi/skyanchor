@@ -205,7 +205,7 @@ The repository weight bundle is distributed separately from Git:
 
 | File | Description |
 | --- | --- |
-| `skyanchor_weights.zip` | 12 weight files; **13.60 GiB** compressed and **14.64 GiB** extracted. |
+| `skyanchor_weights.zip` | 10 weight files; **13.59 GiB** compressed and **14.64 GiB** extracted. |
 | `skyanchor_weights.zip.sha256` | SHA-256 checksum for verifying the downloaded ZIP. |
 | `skyanchor_weights_manifest.json` | Relative paths, sizes, and SHA-256 checksums for individual weights; also included in the ZIP. |
 

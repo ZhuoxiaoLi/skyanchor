@@ -1,4 +1,0 @@
-# uses default configs from class inits
-# example:
-#   see mpsfm/extraction/base.py for extraction defaults
-#   see mpsfm/sfm/mapper/base.py for mapper defaults
