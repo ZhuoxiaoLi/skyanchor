@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run aerial-ground anchors → validated anchor handoff → ground pose reconstruction."""
+"""Run aerial-ground registration, ground pose reconstruction, and Gaussian Splatting."""
 
 import argparse
 from datetime import datetime
@@ -300,21 +300,21 @@ def splatting_command(a):
 def run_stage(stage, logs):
     name, cwd, cmd = stage
     print(f"\n[{name}] cwd={cwd}\n{shlex.join(cmd)}", flush=True)
-    with (logs / f"{name}.log").open("w") as log:
+    with (logs / f"{name}.log").open("wb") as log:
         process = subprocess.Popen(
             cmd,
             cwd=cwd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            text=True,
-            errors="replace",
-            bufsize=1,
+            bufsize=0,
             env={**os.environ, "PYTHONUNBUFFERED": "1"},
         )
         try:
-            for line in process.stdout:
-                print(line, end="", flush=True)
-                log.write(line)
+            # Preserve carriage returns so tqdm can refresh the current line.
+            while chunk := process.stdout.read(65536):
+                sys.stdout.buffer.write(chunk)
+                sys.stdout.buffer.flush()
+                log.write(chunk)
                 log.flush()
             code = process.wait()
         except BaseException:

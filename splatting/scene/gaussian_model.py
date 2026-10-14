@@ -29,6 +29,42 @@ except:
 
 class GaussianModel:
 
+    parameter_names = ("_xyz", "_features_dc", "_features_rest", "_opacity", "_scaling", "_rotation")
+
+    def cache_parameters(self):
+        """Keep an independent CPU snapshot, without optimizer state or gradients."""
+        return {
+            "parameters": {name: getattr(self, name).detach().to("cpu", copy=True)
+                           for name in self.parameter_names},
+            "active_sh_degree": self.active_sh_degree,
+            "max_sh_degree": self.max_sh_degree,
+            "spatial_lr_scale": self.spatial_lr_scale,
+        }
+
+    def merge_cached_parameters(self, cached, opt, init_scale_factor=1.0, init_opacity=0.1):
+        """Merge both models, reinitialize scale/opacity, and reset joint optimizers."""
+        if not math.isfinite(init_scale_factor) or init_scale_factor <= 0:
+            raise ValueError("Joint initialization scale factor must be positive and finite")
+        if not math.isfinite(init_opacity) or not 0 < init_opacity < 1:
+            raise ValueError("Joint initialization opacity must be between zero and one")
+        if cached["max_sh_degree"] != self.max_sh_degree:
+            raise ValueError("Aerial and ground models must use the same maximum SH degree")
+        self.unfreeze_all()
+        self.optimizer = None
+        self.shoptimizer = None
+        for name in self.parameter_names:
+            ground = getattr(self, name).detach()
+            aerial = cached["parameters"][name].to(device=ground.device, dtype=ground.dtype)
+            setattr(self, name, nn.Parameter(torch.cat((aerial, ground), dim=0)))
+        self.active_sh_degree = max(self.active_sh_degree, cached["active_sh_degree"])
+        self.spatial_lr_scale = max(self.spatial_lr_scale, cached["spatial_lr_scale"])
+        with torch.no_grad():
+            spacing = distCUDA2(self._xyz.detach().contiguous()).clamp_min(1e-7).sqrt()
+            self._scaling = nn.Parameter(torch.log(spacing * init_scale_factor)[:, None].repeat(1, 3))
+            self._opacity = nn.Parameter(self.inverse_opacity_activation(
+                torch.full((len(self._xyz), 1), init_opacity, device=self._xyz.device)))
+        self.training_setup(opt)
+
     def __init__(self, sh_degree, optimizer_type="default"):
         self.active_sh_degree = 0
         self.optimizer_type = optimizer_type
@@ -290,8 +326,12 @@ class GaussianModel:
         el = PlyElement.describe(elements, 'vertex')
         PlyData([el]).write(path)
 
-    def reset_opacity(self, min_opacity):
-        opacities_new = self.inverse_opacity_activation(torch.min(self.get_opacity, torch.ones_like(self.get_opacity)*min_opacity))
+    def reset_opacity(self, max_opacity=0.01):
+        """Cap activated opacity and clear its Adam moments."""
+        if not math.isfinite(max_opacity) or not 0 < max_opacity < 1:
+            raise ValueError("Opacity reset maximum must be finite and between zero and one")
+        opacity = self.get_opacity.clamp_max(max_opacity).clamp_min(torch.finfo(self._opacity.dtype).tiny)
+        opacities_new = self.inverse_opacity_activation(opacity)
         if self._n_frozen > 0:
             opacities_new[:self._n_frozen] = self._opacity.data[:self._n_frozen]
         optimizable_tensors = self.replace_tensor_to_optimizer(opacities_new, "opacity")
@@ -344,13 +384,13 @@ class GaussianModel:
         optimizable_tensors = {}
         for group in self.optimizer.param_groups:
             if group["name"] == name:
-                stored_state = self.optimizer.state.get(group['params'][0], None)
-                stored_state["exp_avg"] = torch.zeros_like(tensor)
-                stored_state["exp_avg_sq"] = torch.zeros_like(tensor)
-
-                del self.optimizer.state[group['params'][0]]
+                stored_state = self.optimizer.state.pop(group['params'][0], None)
+                if stored_state is not None:
+                    stored_state["exp_avg"] = torch.zeros_like(tensor)
+                    stored_state["exp_avg_sq"] = torch.zeros_like(tensor)
                 group["params"][0] = nn.Parameter(tensor.requires_grad_(True))
-                self.optimizer.state[group['params'][0]] = stored_state
+                if stored_state is not None:
+                    self.optimizer.state[group['params'][0]] = stored_state
 
                 optimizable_tensors[group["name"]] = group["params"][0]
         return optimizable_tensors
@@ -475,7 +515,7 @@ class GaussianModel:
         torch.cuda.empty_cache()
         return int(outside_mask.sum().item())
 
-    def densify_and_prune_Improved(self, scores, min_opacity, budget, opt, iteration) -> int:
+    def densify_and_prune_Improved(self, scores, min_opacity, budget, opt, iteration) -> dict:
         grad_vars = self.xyz_gradient_accum / self.denom
         grad_vars[grad_vars.isnan()] = 0.0
 
@@ -495,32 +535,29 @@ class GaussianModel:
         total_sum = torch.sum(grad_qualifiers).item()
         budget = min(budget, total_sum + n_train)
         all_budget = budget - n_train
-        n_prune = 0
+        split_parents = 0
         if all_budget > 0:
-            n_prune += self.long_axis_split(
+            split_parents = self.long_axis_split(
                 scores.clone(), all_budget, grad_qualifiers, opt.split_distance, opt.opacity_reduction
             )
 
-        prune_mask = (self.get_opacity < min_opacity).squeeze()
+        prune_mask = (self.get_opacity < min_opacity).reshape(-1)
         if self._n_frozen > 0:
             prune_mask[:self._n_frozen] = False
-        n_prune += self.prune_points(prune_mask)
+        opacity_pruned = self.prune_points(prune_mask)
 
         torch.cuda.empty_cache()
-        return n_prune
+        return {"split": split_parents, "pruned": opacity_pruned}
 
     def add_densification_stats(self, viewspace_point_tensor, update_filter):
         self.xyz_gradient_accum[update_filter] += torch.norm(viewspace_point_tensor.grad[update_filter,:2], dim=-1, keepdim=True)
         self.denom[update_filter] += 1
 
-    def add_densification_stats_abs(self, viewspace_point_tensor, update_filter, densification_grad=None):
-        grad = viewspace_point_tensor.grad if densification_grad is None else densification_grad
+    def add_densification_stats_abs(self, viewspace_point_tensor, update_filter):
+        grad = viewspace_point_tensor.grad
         if grad is None:
             return
-        if update_filter.dtype == torch.bool:
-            index = update_filter.reshape(-1)
-        else:
-            index = update_filter.reshape(-1)
+        index = update_filter.reshape(-1)
         if index.numel() == 0:
             return
         self.xyz_gradient_accum[index] += torch.norm(grad[index,2:], dim=-1, keepdim=True)

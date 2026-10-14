@@ -122,40 +122,14 @@ def apply_camera_alpha(image, camera):
     return image * alpha_mask, alpha_mask
 
 
-def masked_l1_for_densification(network_output, gt, alpha_mask):
-    if alpha_mask.dim() == 2:
-        alpha_mask = alpha_mask.unsqueeze(0)
-    alpha_mask = alpha_mask.to(device=network_output.device, dtype=network_output.dtype)
-    if alpha_mask.shape[0] == 1 and network_output.shape[0] != 1:
-        alpha_mask = alpha_mask.expand_as(network_output)
-    denom = alpha_mask.sum().clamp_min(1.0)
-    return (torch.abs(network_output - gt) * alpha_mask).sum() / denom
-
-
-def get_gaussian_alpha_mask(camera, gaussian_centers, radii=None, threshold=0.5):
-    num_points = int(gaussian_centers.shape[0])
-    device = gaussian_centers.device
-    if not getattr(camera, "has_alpha_mask", False):
-        keep = torch.ones(num_points, device=device, dtype=torch.bool)
-        if radii is not None:
-            keep &= radii.to(device=device) > 0
-        return keep
-
-    alpha_mask = get_camera_alpha_mask(camera, device=device, dtype=torch.float32).squeeze()
-    if alpha_mask.dim() != 2:
-        alpha_mask = alpha_mask.reshape(alpha_mask.shape[-2], alpha_mask.shape[-1])
-
-    height, width = alpha_mask.shape
-    centers = gaussian_centers.detach()
-    x = centers[:, 0]
-    y = centers[:, 1]
-    inside = (x >= 0) & (x < width) & (y >= 0) & (y < height)
-    x_idx = x.round().long().clamp(0, width - 1)
-    y_idx = y.round().long().clamp(0, height - 1)
-    keep = (alpha_mask[y_idx, x_idx] > threshold) & inside
-    if radii is not None:
-        keep &= radii.to(device=device) > 0
-    return keep
+def photometric_loss(image, camera, lambda_dssim):
+    """Use the same pixel-masked L1 and SSIM objective in every stage."""
+    image_masked, alpha_mask = apply_camera_alpha(image, camera)
+    gt_image_masked = camera.original_image.to(image.device) * alpha_mask
+    Ll1 = l1_loss(image_masked, gt_image_masked)
+    ssim_value = fast_ssim(image_masked.unsqueeze(0), gt_image_masked.unsqueeze(0))
+    loss = (1.0 - lambda_dssim) * Ll1 + lambda_dssim * (1.0 - ssim_value)
+    return loss, Ll1, image_masked, gt_image_masked
 
 
 def filter_visibility_by_alpha(visibility_filter, gaussian_alpha_mask):
@@ -165,33 +139,6 @@ def filter_visibility_by_alpha(visibility_filter, gaussian_alpha_mask):
         return visibility_filter & gaussian_alpha_mask
     visible_ids = visibility_filter.reshape(-1)
     return visible_ids[gaussian_alpha_mask[visible_ids]]
-
-
-def apply_gaussian_alpha_mask_to_optimizer_state(gaussians, gaussian_alpha_mask):
-    if gaussian_alpha_mask is None:
-        return
-    keep_mask = gaussian_alpha_mask.to(device=gaussians.get_xyz.device, dtype=torch.bool)
-    optimizers = [gaussians.optimizer]
-    if getattr(gaussians, "shoptimizer", None) is not None:
-        optimizers.append(gaussians.shoptimizer)
-
-    for optimizer in optimizers:
-        if optimizer is None:
-            continue
-        for group in optimizer.param_groups:
-            param = group["params"][0]
-            if param.shape[0] != keep_mask.shape[0]:
-                continue
-            keep = keep_mask.view((keep_mask.shape[0],) + (1,) * (param.dim() - 1))
-            if param.grad is not None:
-                param.grad.mul_(keep)
-            state = optimizer.state.get(param, None)
-            if not state:
-                continue
-            for key in ("exp_avg", "exp_avg_sq"):
-                value = state.get(key, None)
-                if torch.is_tensor(value) and value.shape == param.shape:
-                    value.mul_(keep)
 
 
 def get_masked_camera_image(camera, device=None):
@@ -338,79 +285,39 @@ def apply_explicit_aerial_ground_length_to_ns(ns) -> None:
         ns.iterations = a + g
 
 
-def _eff_i(opt, st: str, name: str, gname: str) -> int:
-    v = getattr(opt, f"{st}_{name}", -1)
-    if v is None or int(v) < 0:
-        return int(getattr(opt, gname))
-    return int(v)
-
-
-def _eff_f(opt, st: str, name: str, gname: str) -> float:
-    v = getattr(opt, f"{st}_{name}", -1.0)
-    if v is None or float(v) < 0.0:
-        return float(getattr(opt, gname))
-    return float(v)
-
-
-def _eff_budget_cap(opt, st: str) -> int:
-    """Return the stage Gaussian budget; a stage budget of -1 inherits opt.budget."""
-    v = getattr(opt, f"{st}_budget", -1)
-    if v is None or int(v) < 0:
-        return int(getattr(opt, "budget", 0))
-    return int(v)
-
-
 def compute_densify_window_and_params(
     opt,
     *,
     has_ground: bool,
     ground_start_iter: int,
     total_iterations: int,
-    joint_finetune_iters: int,
     stage2_active: bool,
     stage3_active: bool,
 ):
-    """Return (densify_from, densify_until, densification_interval, opacity_reset_interval, grad_threshold). Densification uses strict bounds: densify_from < iteration < densify_until."""
-    if stage3_active and int(joint_finetune_iters or 0) > 0:
-        dfrom = int(opt.iterations) + int(getattr(opt, "stage3_densify_from", 0))
-        rel = int(getattr(opt, "stage3_densify_until", 0))
-        jf = int(joint_finetune_iters)
-        win = rel if rel > 0 else jf
-        duntil = min(int(opt.iterations) + win, int(total_iterations) + 1)
-        di = _eff_i(opt, "stage3", "densification_interval", "densification_interval")
-        oi = _eff_i(opt, "stage3", "opacity_reset_interval", "opacity_reset_interval")
-        gthr = _eff_f(opt, "stage3", "densify_grad_threshold", "densify_grad_threshold")
-        return dfrom, duntil, di, oi, gthr
+    """Use shared stage-local schedules; joint training has no density updates."""
+    if stage3_active:
+        return int(total_iterations), int(total_iterations), 0, 0, 0.0
 
-    if stage2_active and has_ground and ground_start_iter > 0:
-        a = int(getattr(opt, "aerial_stage_iterations", 0) or 0)
-        g = int(getattr(opt, "ground_stage_iterations", 0) or 0)
-        if a == 0 or g == 0:
-            s2_from = int(getattr(opt, "ground_densify_after", 2000))
-            s2_until = s2_from + int(getattr(opt, "ground_densify_duration", 18000))
-        else:
-            s2_from = int(getattr(opt, "stage2_densify_from", 2000))
-            s2_until = int(getattr(opt, "stage2_densify_until", 20000))
-        dfrom = int(ground_start_iter) + s2_from
-        duntil = min(int(ground_start_iter) + s2_until, int(opt.iterations))
-        di = _eff_i(opt, "stage2", "densification_interval", "densification_interval")
-        oi = _eff_i(opt, "stage2", "opacity_reset_interval", "opacity_reset_interval")
-        gthr = _eff_f(opt, "stage2", "densify_grad_threshold", "densify_grad_threshold")
-        return dfrom, duntil, di, oi, gthr
-
+    offset = int(ground_start_iter) if stage2_active and has_ground else 0
+    stage_end = int(opt.iterations)
     if has_ground and ground_start_iter > 0:
-        dfrom = int(getattr(opt, "stage1_densify_from", opt.densify_from_iter))
-        duntil = min(int(getattr(opt, "stage1_densify_until", opt.densify_until_iter)), int(ground_start_iter))
-        di = _eff_i(opt, "stage1", "densification_interval", "densification_interval")
-        oi = _eff_i(opt, "stage1", "opacity_reset_interval", "opacity_reset_interval")
-        gthr = _eff_f(opt, "stage1", "densify_grad_threshold", "densify_grad_threshold")
-    else:
-        dfrom = int(opt.densify_from_iter)
-        duntil = int(opt.densify_until_iter)
-        di = int(opt.densification_interval)
-        oi = int(opt.opacity_reset_interval)
-        gthr = float(opt.densify_grad_threshold)
-    return dfrom, duntil, di, oi, gthr
+        stage_end = int(opt.iterations) if stage2_active else int(ground_start_iter)
+    return (offset + int(opt.densify_from_iter),
+            min(offset + int(opt.densify_until_iter), stage_end),
+            int(opt.densification_interval), int(opt.opacity_reset_interval),
+            float(opt.densify_grad_threshold))
+
+
+def sample_densification_views(cameras, edges, remaining_indices, count):
+    """Sample across the whole sequence, keeping each camera paired with its edge map."""
+    selected_cameras, selected_edges = [], []
+    for _ in range(count):
+        if not remaining_indices:
+            remaining_indices.extend(range(len(cameras)))
+        index = remaining_indices.pop(randint(0, len(remaining_indices) - 1))
+        selected_cameras.append(cameras[index])
+        selected_edges.append(edges[index])
+    return selected_cameras, selected_edges
 
 
 def training(dataset, opt, pipe, testing_iterations, saving_iterations, debug_from, websockets, args, run_label=None):
@@ -446,12 +353,12 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, debug_fr
     all_edges = []
     for view in scene.getTrainCameras():
         all_edges.append(get_camera_edges_loss(view))
-    my_viewpoint_stack = scene.getTrainCameras().copy()
-    edges_stack = all_edges.copy()
+    edge_view_indices = []
 
     ema_loss_for_log = 0.0
     ema_psnr_for_log = 0.0
     prune_cumulative = 0
+    split_cumulative = 0
     progress_desc = "Training progress" if run_label is None else f"Training progress [{run_label}]"
     apply_explicit_aerial_ground_length(opt, dataset)
     ground_path_dbg = getattr(dataset, "ground_source_path", "") or ""
@@ -473,7 +380,6 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, debug_fr
     first_iter = 1
     progress_bar = tqdm(range(first_iter, total_iterations + 1), desc=progress_desc)
 
-    last_opacity_reset_iter = 0
 
     bg = torch.rand((3), device="cuda") if opt.random_background else background
 
@@ -493,6 +399,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, debug_fr
     gaussians.configure_position_schedule(opt, ground_start_iter if ground_source_path else opt.position_lr_max_steps)
     stage2_active = False
     stage3_active = False
+    aerial_cache = None
     all_cameras_combined = None
 
     if ground_source_path:
@@ -517,10 +424,18 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, debug_fr
         if (ground_source_path and not stage2_active
                 and iteration == ground_start_iter + 1):
             stage2_active = True
+            prune_cumulative = split_cumulative = 0
             n_aerial = gaussians.get_xyz.shape[0]
+            if ground_start_iter not in saving_iterations:
+                scene.save(ground_start_iter)
+            aerial_cache = gaussians.cache_parameters()
+            gaussians = GaussianModel(dataset.sh_degree, opt.optimizer_type)
+            scene.gaussians = gaussians
+            gc.collect()
+            torch.cuda.empty_cache()
             print(f"\n{'='*60}")
             print(f"[Stage2] Switching to ground stage at iter {iteration}")
-            print(f"[Stage2] Aerial Gaussians frozen: {n_aerial}")
+            print(f"[Stage2] Aerial Gaussians cached on CPU, excluded from rendering and training: {n_aerial}")
 
             ground_images_dir = getattr(dataset, 'ground_images', 'images')
             ensure_ground_dense_init_ply(
@@ -547,19 +462,12 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, debug_fr
             print(f"[Stage2] Ground train cameras: {len(ground_cameras)}, "
                   f"Ground points: {len(ground_pcd.points)}")
 
-            with torch.no_grad():
-                parameters = gaussians.point_parameters(
-                    np.asarray(ground_pcd.points), np.asarray(ground_pcd.colors),
-                    dataset.init_scale_factor, dataset.init_opacity,
-                )
-                N_ground = len(parameters[0])
-                gaussians.densification_postfix(*parameters)
-                print(f"[Stage2] Ground init: RMS-3NN * {dataset.init_scale_factor:g}, opacity={dataset.init_opacity:g}")
-                print(f"[Stage2] Added {N_ground} ground Gaussians "
-                      f"(total: {gaussians.get_xyz.shape[0]})")
-
-            gaussians.freeze_by_mask(n_aerial)
+            gaussians.create_from_pcd(
+                ground_pcd, ground_extent, dataset.init_scale_factor, dataset.init_opacity,
+            )
+            gaussians.training_setup(opt)
             gaussians.configure_position_schedule(opt, opt.iterations - ground_start_iter)
+            print(f"[Stage2] Independent ground model: {len(gaussians.get_xyz)} Gaussians, SH degree 0, fresh optimizer")
 
             viewpoint_stack = ground_cameras.copy()
             viewpoint_indices = list(range(len(viewpoint_stack)))
@@ -568,12 +476,10 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, debug_fr
             for view in ground_cameras:
                 ground_all_edges.append(get_camera_edges_loss(view))
             all_edges = ground_all_edges.copy()
-            my_viewpoint_stack = ground_cameras.copy()
-            edges_stack = all_edges.copy()
+            edge_view_indices = []
 
             ema_loss_for_log = 0.0
             ema_psnr_for_log = 0.0
-            last_opacity_reset_iter = iteration
             print(f"[Stage2] Ground stage started at iter {iteration}")
             print(f"{'='*60}\n")
 
@@ -581,7 +487,14 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, debug_fr
                 and joint_finetune_iters > 0
                 and iteration == opt.iterations + 1):
             stage3_active = True
-            gaussians.unfreeze_all()
+            prune_cumulative = split_cumulative = 0
+            if opt.iterations not in saving_iterations:
+                scene.save(opt.iterations)
+            gaussians.merge_cached_parameters(
+                aerial_cache, opt, dataset.init_scale_factor, dataset.init_opacity,
+            )
+            joint_num_gaussians = len(gaussians.get_xyz)
+            aerial_cache = None
             gaussians.configure_position_schedule(opt, joint_finetune_iters)
             all_cameras_combined = list(scene.getTrainCameras()) + list(ground_cameras)
 
@@ -591,16 +504,16 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, debug_fr
             all_edges = aerial_edges + ground_all_edges
             viewpoint_stack = list(all_cameras_combined)
             viewpoint_indices = list(range(len(viewpoint_stack)))
-            my_viewpoint_stack = list(all_cameras_combined)
-            edges_stack = all_edges.copy()
+            edge_view_indices = []
 
             ema_loss_for_log = 0.0
             ema_psnr_for_log = 0.0
-            last_opacity_reset_iter = iteration
 
             print(f"\n{'='*60}")
             print(f"[Stage3] Joint finetune started at iter {iteration}")
-            print(f"[Stage3] All Gaussians unfrozen: {gaussians.get_xyz.shape[0]}")
+            print(f"[Stage3] All Gaussians trainable: {joint_num_gaussians}")
+            print(f"[Stage3] Scale reset to merged RMS-3NN * {dataset.init_scale_factor:g}; opacity={dataset.init_opacity:g}")
+            print("[Stage3] Fixed Gaussian count; no densification, pruning, or periodic opacity resets")
             print(f"[Stage3] Combined cameras: {len(all_cameras_combined)} "
                   f"(aerial {len(scene.getTrainCameras())} + ground {len(ground_cameras)})")
             print(f"[Stage3] Will run for {joint_finetune_iters} iterations "
@@ -632,7 +545,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, debug_fr
         gaussians.update_learning_rate(stage_iteration - 1)
 
         # Every 1000 its we increase the levels of SH up to a maximum degree
-        if iteration % 1000 == 0:
+        if stage_iteration % 1000 == 0:
             gaussians.oneupSHdegree()
 
         # Pick a random Camera
@@ -654,39 +567,14 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, debug_fr
 
         render_pkg = render(viewpoint_cam, gaussians, pipe, bg)
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
-        alpha_gaussian_mask = get_gaussian_alpha_mask(
-            viewpoint_cam,
-            render_pkg["gaussian_centers"],
-            radii,
-        )
-
-        # Loss
-        gt_image = viewpoint_cam.original_image.cuda()
-        image_masked, alpha_mask = apply_camera_alpha(image, viewpoint_cam)
-        gt_image_masked = gt_image * alpha_mask
-        densification_grad = None
-        if getattr(viewpoint_cam, "has_alpha_mask", False):
-            densification_loss = masked_l1_for_densification(image, gt_image, alpha_mask)
-            densification_grad = torch.autograd.grad(
-                densification_loss,
-                viewspace_point_tensor,
-                retain_graph=True,
-                allow_unused=True,
-            )[0]
-
-        Ll1 = l1_loss(image_masked, gt_image_masked)
-
-        ssim_value = fast_ssim(image_masked.unsqueeze(0), gt_image_masked.unsqueeze(0))
-        loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim_value)
-
+        loss, Ll1, image_masked, gt_image_masked = photometric_loss(image, viewpoint_cam, opt.lambda_dssim)
         loss.backward()
-        if getattr(viewpoint_cam, "has_alpha_mask", False):
-            apply_gaussian_alpha_mask_to_optimizer_state(gaussians, alpha_gaussian_mask)
 
         iter_end.record()
 
         with torch.no_grad():
             prn_this = 0
+            split_this = 0
             ema_loss_for_log = 0.4 * loss.item() + 0.6 * ema_loss_for_log
             batch_psnr = float(psnr(image_masked.detach(), gt_image_masked.detach()).mean().item())
             ema_psnr_for_log = 0.4 * batch_psnr + 0.6 * ema_psnr_for_log
@@ -694,12 +582,98 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, debug_fr
             # Log and save
             validation_configs = None
             if ground_report_train_cameras is not None:
-                validation_configs = (
-                    {'name': 'test_aerial', 'cameras': scene.getTestCameras()},
-                    {'name': 'train_aerial', 'cameras': scene.getTrainCameras()},
+                ground_validation = (
                     {'name': 'test_ground', 'cameras': ground_report_test_cameras},
                     {'name': 'train_ground', 'cameras': ground_report_train_cameras},
                 )
+                aerial_validation = (
+                    {'name': 'test_aerial', 'cameras': scene.getTestCameras()},
+                    {'name': 'train_aerial', 'cameras': scene.getTrainCameras()},
+                )
+                validation_configs = ground_validation if stage2_active and not stage3_active else aerial_validation + ground_validation
+            cull_thr = float(getattr(opt, "cull_opacity", 0.003))
+
+            hg = bool(ground_source_path and str(ground_source_path).strip())
+            densify_from, densify_until, d_int, o_int, g_thr = compute_densify_window_and_params(
+                opt,
+                has_ground=hg,
+                ground_start_iter=ground_start_iter,
+                total_iterations=total_iterations,
+                stage2_active=bool(stage2_active and not stage3_active),
+                stage3_active=bool(stage3_active),
+            )
+
+            if densify_from < iteration < densify_until:
+                gaussians.add_densification_stats_abs(viewspace_point_tensor, visibility_filter)
+
+            # Consume gradients before densification can replace parameter tensors.
+            gaussians.optimizer_step(radii > 0)
+
+            if densify_from < iteration < densify_until:
+                if d_int > 0 and stage_iteration % d_int == 0:
+                    active_cam_list = active_cams
+                    num_cams = args.cams
+                    if args.cams == -1 or (stage_iteration % 6000 == 400 and stage_iteration < 30000):
+                        num_cams = len(active_cam_list)
+                    camlist, edge_losses = sample_densification_views(
+                        active_cam_list, all_edges, edge_view_indices, num_cams)
+                    gaussian_importance = compute_edge_score(camlist, edge_losses, gaussians, pipe, bg)
+
+                    startI = densify_from
+                    endI = densify_until - 500
+                    rate = (iteration - startI) / max(endI - startI, 1)
+                    cap = opt.budget
+                    if rate >= 1.0:
+                        b_alloc = cap
+                    else:
+                        b_alloc = int(math.sqrt(max(rate, 0.0)) * cap)
+
+                    stats = gaussians.densify_and_prune_Improved(
+                        gaussian_importance, cull_thr, b_alloc, opt, stage_iteration
+                    )
+                    prn_this += stats["pruned"]
+                    split_this += stats["split"]
+                    if getattr(opt, "densify_debug", False):
+                        st = (
+                            "Stage3-joint"
+                            if stage3_active
+                            else ("Stage2-ground" if stage2_active else "Stage1-aerial")
+                        )
+                        n_gs = int(gaussians.get_xyz.shape[0])
+                        n_tr = n_gs - int(
+                            getattr(gaussians, "_n_frozen", 0) or 0
+                        )
+                        print(
+                            f"[Densify-debug] {st}  iter={iteration}  d_int={d_int}  "
+                            f"N_GS={n_gs}  N_trainable={n_tr}  cap={cap}  b_alloc={b_alloc}  "
+                            f"window=({densify_from}, {densify_until}) split={stats['split']} "
+                            f"pruned={stats['pruned']}"
+                        )
+
+                if o_int > 0 and stage_iteration % o_int == 0:
+                    gaussians.reset_opacity(opt.opacity_reset_max)
+                    print(f"[Opacity reset] iter={iteration} max_opacity={opt.opacity_reset_max:g}", flush=True)
+
+            if stage3_active and len(gaussians.get_xyz) != joint_num_gaussians:
+                raise RuntimeError("The Gaussian count changed during joint training")
+
+            prune_cumulative += prn_this
+            split_cumulative += split_this
+            if iteration % 10 == 0 or iteration == total_iterations:
+                progress_bar.set_postfix(
+                    {
+                        "Loss": f"{ema_loss_for_log:.{5}f}",
+                        "PSNR": f"{ema_psnr_for_log:.3f}",
+                        "N_GS": f"{gaussians.get_xyz.shape[0]}",
+                        "splitN": f"{split_cumulative}",
+                        "pruneN": f"{prune_cumulative}",
+                    },
+                    refresh=False,
+                )
+                progress_bar.update(iteration - progress_bar.n)
+            if iteration == total_iterations:
+                progress_bar.close()
+
             training_report(
                 tb_writer,
                 iteration,
@@ -713,109 +687,16 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, debug_fr
                 (pipe, background),
                 validation_configs=validation_configs,
             )
-            cull_thr = float(getattr(opt, "cull_opacity", 0.003))
-
-            hg = bool(ground_source_path and str(ground_source_path).strip())
-            densify_from, densify_until, d_int, o_int, g_thr = compute_densify_window_and_params(
-                opt,
-                has_ground=hg,
-                ground_start_iter=ground_start_iter,
-                total_iterations=total_iterations,
-                joint_finetune_iters=joint_finetune_iters,
-                stage2_active=bool(stage2_active and not stage3_active),
-                stage3_active=bool(stage3_active),
-            )
-
-            if densify_from < iteration < densify_until:
-                alpha_visibility_filter = filter_visibility_by_alpha(visibility_filter, alpha_gaussian_mask)
-                gaussians.add_densification_stats_abs(viewspace_point_tensor, alpha_visibility_filter, densification_grad)
-
-            # Consume gradients before densification can replace parameter tensors.
-            gaussians.optimizer_step((radii > 0) & alpha_gaussian_mask)
-
-            if densify_from < iteration < densify_until:
-                if d_int > 0 and stage_iteration % d_int == 0:
-                    num_train_images = len(active_cams)
-                    # Allow one image-count interval for opacity recovery after a reset.
-                    if iteration - last_opacity_reset_iter > num_train_images:
-                        active_cam_list = active_cams
-                        num_cams = args.cams
-                        if args.cams == -1 or (stage_iteration % 6000 == 400 and stage_iteration < 30000):
-                            num_cams = len(active_cam_list)
-                        edge_losses = []
-                        camlist = []
-                        for _ in range(num_cams):
-                            if not my_viewpoint_stack:
-                                my_viewpoint_stack = list(active_cam_list)
-                                edges_stack = all_edges.copy()
-                            camlist.append(my_viewpoint_stack.pop())
-                            edge_losses.append(edges_stack.pop())
-                        gaussian_importance = compute_edge_score(camlist, edge_losses, gaussians, pipe, bg)
-
-                        startI = densify_from
-                        endI = densify_until - 500
-                        rate = (iteration - startI) / max(endI - startI, 1)
-                        if stage3_active:
-                            cap = _eff_budget_cap(opt, "stage3")
-                        elif stage2_active:
-                            cap = _eff_budget_cap(opt, "stage2")
-                        else:
-                            cap = _eff_budget_cap(opt, "stage1")
-                        if rate >= 1.0:
-                            b_alloc = cap
-                        else:
-                            b_alloc = int(math.sqrt(max(rate, 0.0)) * cap)
-
-                        _pgt = opt.densify_grad_threshold
-                        opt.densify_grad_threshold = g_thr
-                        try:
-                            prn_this += int(
-                                gaussians.densify_and_prune_Improved(
-                                    gaussian_importance, cull_thr, b_alloc, opt, stage_iteration
-                                )
-                            )
-                        finally:
-                            opt.densify_grad_threshold = _pgt
-                        if getattr(opt, "densify_debug", False):
-                            st = (
-                                "Stage3-joint"
-                                if stage3_active
-                                else ("Stage2-ground" if stage2_active else "Stage1-aerial")
-                            )
-                            n_gs = int(gaussians.get_xyz.shape[0])
-                            n_tr = n_gs - int(
-                                getattr(gaussians, "_n_frozen", 0) or 0
-                            )
-                            print(
-                                f"[Densify-debug] {st}  iter={iteration}  d_int={d_int}  "
-                                f"N_GS={n_gs}  N_trainable={n_tr}  cap={cap}  b_alloc={b_alloc}  "
-                                f"window=({densify_from}, {densify_until})"
-                            )
-
-                if o_int > 0 and stage_iteration % o_int == 0:
-                    gaussians.reset_opacity(0.005)
-                    last_opacity_reset_iter = iteration
-
-
-
-
-            prune_cumulative += prn_this
-            if iteration % 10 == 0 or iteration == total_iterations:
-                progress_bar.set_postfix(
-                    {
-                        "Loss": f"{ema_loss_for_log:.{5}f}",
-                        "PSNR": f"{ema_psnr_for_log:.3f}",
-                        "N_GS": f"{gaussians.get_xyz.shape[0]}",
-                        "prN": f"{prune_cumulative}",
-                    }
-                )
-                progress_bar.update(iteration - progress_bar.n)
-            if iteration == total_iterations:
-                progress_bar.close()
 
             if iteration in saving_iterations:
                 print(f"\n[ITER {iteration}] Saving Gaussians")
                 scene.save(iteration)
+
+        if ground_source_path and iteration in (ground_start_iter, opt.iterations):
+            # Release the previous render graph before allocating the next stage.
+            del loss, Ll1, image, image_masked, render_pkg, viewspace_point_tensor
+            if websockets:
+                net_image = None
 
     if tb_writer:
         tb_writer.close()
@@ -861,11 +742,7 @@ def compute_edge_score(camlist, edge_losses, gaussians, pipe, bg):
         render_pkg = render(my_viewpoint_cam, gaussians, pipe, bg, pixel_weights=pixel_weights)
 
         loss_accum = normalize(render_pkg["accum_weights"])
-        alpha_gaussian_mask = get_gaussian_alpha_mask(
-            my_viewpoint_cam,
-            render_pkg["gaussian_centers"],
-            render_pkg["radii"],
-        )
+        alpha_gaussian_mask = render_pkg["accum_weights"].detach().reshape(-1) > 0
         visibility_filter = filter_visibility_by_alpha(
             render_pkg["visibility_filter"].detach(),
             alpha_gaussian_mask,
@@ -979,19 +856,23 @@ if __name__ == "__main__":
         raise SystemExit(0)
     apply_explicit_aerial_ground_length_to_ns(args)
     args.save_iterations.append(args.iterations)
+    args.test_iterations.append(args.iterations)
 
     if getattr(args, 'ground_source_path', '') and args.ground_source_path.strip():
         gs_iter = getattr(args, 'ground_start_iter', 30000)
+        args.test_iterations.append(gs_iter)
         if gs_iter not in args.save_iterations:
             args.save_iterations.append(gs_iter)
         jf_iters = getattr(args, 'joint_finetune_iterations', 0)
         if jf_iters > 0:
             jf_end = args.iterations + jf_iters
+            args.test_iterations.append(jf_end)
             if args.iterations not in args.save_iterations:
                 args.save_iterations.append(args.iterations)
             if jf_end not in args.save_iterations:
                 args.save_iterations.append(jf_end)
 
+    args.test_iterations = sorted(set(args.test_iterations))
     args.model_path = ensure_output_root(args.model_path)
 
     with open(os.path.join(args.model_path, "training_config.json"), "w") as f:

@@ -45,7 +45,6 @@ class Camera(nn.Module):
         self.has_alpha_mask = gt_alpha_mask is not None
         if gt_alpha_mask is not None:
             self.alpha_mask = gt_alpha_mask.clamp(0.0, 1.0).to(self.data_device)
-            self.original_image *= self.alpha_mask
         else:
             self.alpha_mask = torch.ones(
                 (1, self.image_height, self.image_width),

@@ -54,16 +54,12 @@ For the final release, we plan to improve reconstruction speed in two areas:
 - [Reuse intermediate results](#reuse-intermediate-results)
 - [Run individual modules](#run-individual-modules)
 - [Outputs](#outputs)
-- [Troubleshooting](#troubleshooting)
-- [Development checks](#development-checks)
 
 ## Installation
 
 ### Prerequisites
 
-Use Linux with Conda, an NVIDIA GPU, and a CUDA-capable PyTorch installation. Building the splatting extensions also requires a CUDA toolkit, a compatible C++ compiler, and Ninja. The CUDA toolkit used to compile extensions should match the PyTorch CUDA build.
-
-All three modules—`agRecon`, `anchorRecon`, and `splatting`—use a **single Conda environment named `skyanchor`**. Create it once, then install the dependencies for each module into that same environment.
+Our reference system uses Ubuntu 22.04 and an NVIDIA RTX PRO 6000 Blackwell GPU with 96 GB of memory. Building the splatting extensions requires a CUDA 12.8 toolkit, a compatible C++ compiler, and Ninja. All three modules use the same `skyanchor` Conda environment.
 
 | Component | Shared `skyanchor` environment |
 | --- | --- |
@@ -79,7 +75,6 @@ All three modules—`agRecon`, `anchorRecon`, and `splatting`—use a **single C
 | ONNX / ml_dtypes / protobuf | 1.20.1 / 0.5.3 / 4.25.8 |
 | Local components | LoMa, the AG third-party models, RoMaV2, SkyRemoval, and three CUDA extensions |
 
-The shared configuration retains PyTorch 2.7.0, torchvision 0.22.0, and CUDA 12.8 for all three modules. It has been checked with reconstruction regression tests, sky-mask inference, RoMaV2 dense initialization, and a short aerial–ground–joint GPU training run. This is not a fully locked environment or a full-length training validation. Build native extensions with this environment's Python, PyTorch, and CUDA toolkit; do not copy compiled modules from another environment.
 
 Run the installation commands from the repository root unless a different working directory is shown:
 
@@ -87,8 +82,6 @@ Run the installation commands from the repository root unless a different workin
 cd /path/to/sky_anchor
 export SKYANCHOR_ROOT="$PWD"
 ```
-
-Keep the source directories under `agRecon/third_party`, `anchorRecon/submodules`, and `splatting/submodules` available. Editable installs and model loaders depend on these files.
 
 ### 1. Create the shared environment and install reconstruction dependencies
 
@@ -157,8 +150,6 @@ The pose module loads the bundled LoMa source from `anchorRecon/submodules/LoMa/
 python -m pip install --no-deps -e ./anchorRecon/submodules/LoMa
 ```
 
-`--no-deps` preserves the shared dependency versions. LoMa's upstream metadata requests newer OpenCV and Pillow versions; this workflow uses the bundled implementation with OpenCV 4.11 and Pillow 11.3. Avoid installing another LoMa version in the same environment, since an installed package takes precedence over the source fallback.
-
 The pose module does not require the Gaussian rasterizer. Its main components are LoMa matching, PnP, bundle adjustment, COLMAP export, and the Viser pose viewer.
 
 ### 3. Add Gaussian Splatting dependencies to the same environment
@@ -191,11 +182,6 @@ python -m pip install --no-build-isolation ./splatting/submodules/simple-knn
 python -m pip install --no-build-isolation ./splatting/submodules/fused-ssim
 ```
 
-RoMaV2 is installed with `--no-deps` because its upstream metadata requests torchvision >= 0.23 and Pillow >= 12. The bundled implementation has been exercised with the versions in the table above. Do not let its dependency resolver upgrade the existing PyTorch stack. The ONNX commands also preserve existing dependencies; NumPy, typing extensions, and ONNX Runtime must already be available from the shared environment setup. If ONNX Runtime is missing, install `onnxruntime==1.24.4`. Installing `onnxruntime` alone does not provide the separate `onnx` package imported by SkyRemoval.
-
-Build the CUDA extensions from **this repository's sources**. The renderer uses a customized rasterizer API; a generic Gaussian Splatting rasterizer is not interchangeable. Rebuild these extensions after changing PyTorch or the CUDA toolkit.
-
-The CPU ONNX Runtime package is sufficient for sky-mask inference. To use its CUDA execution provider, replace `onnxruntime` with a compatible `onnxruntime-gpu` installation rather than installing both packages. Gaussian training itself still requires CUDA, including when `--data_device cpu` is used; that option controls image storage.
 
 ### Model weights
 
@@ -206,10 +192,6 @@ The repository weight bundle is distributed separately from Git:
 | File | Description |
 | --- | --- |
 | `skyanchor_weights.zip` | 10 weight files; **13.59 GiB** compressed and **14.64 GiB** extracted. |
-| `skyanchor_weights.zip.sha256` | SHA-256 checksum for verifying the downloaded ZIP. |
-| `skyanchor_weights_manifest.json` | Relative paths, sizes, and SHA-256 checksums for individual weights; also included in the ZIP. |
-
-The bundle contains aerial MASt3R, Metric3D, RoMa/DINOv2, SuperPoint/SuperGlue, NCNN sky-segmentation weights, and the SkyRemoval ONNX model. Allow approximately **29 GiB** of free space to keep both the downloaded ZIP and the extracted weights, in addition to space needed for datasets and training outputs.
 
 To install the separately distributed repository weights, download `skyanchor_weights.zip` into the repository root and extract it there:
 
@@ -218,57 +200,19 @@ cd /path/to/sky_anchor
 unzip -o skyanchor_weights.zip
 ```
 
-The ZIP preserves paths such as `agRecon/local/weights/checkpoint-aerial-mast3r.pth` and `splatting/submodules/SkyRemoval/model/model.onnx`, so no manual file placement is required. It contains actual weight files, including the contents of local symbolic links, rather than links to the original machine. Extraction overwrites existing files at these paths. Use a ZIP64-capable extractor because some weights exceed 4 GiB.
-
-The archive includes only weights stored in `agRecon`, `anchorRecon`, and `splatting`; it does not include Conda environments, PyTorch packages, user-level model caches, or training outputs. There are currently no weight files stored inside `anchorRecon`: LoMa and its backbone use an external model cache and still require their initial downloads. Other cache-based models, including RoMaV2 and AnyLoc, also require downloads unless already cached. This archive alone is not a complete offline installation.
-
-The included `skyanchor_weights_manifest.json` records each file's relative path, size, and SHA-256 checksum. If the companion checksum file is available, verify the downloaded archive before extraction:
-
-```bash
-sha256sum -c skyanchor_weights.zip.sha256
-```
-
-The legacy `agRecon/local/weights/skyseg.onnx` is excluded because the available file fails ONNX parsing. The bundle includes the valid SkyRemoval model at `splatting/submodules/SkyRemoval/model/model.onnx`. AG configurations that explicitly use the legacy sky-segmentation model require a separate valid copy.
-
-| Module | Required assets |
-| --- | --- |
-| `agRecon` | Weights selected by the AG configuration, including aerial MASt3R and the configured depth/retrieval models. Model definitions provide download locations; local weights are stored under `agRecon/local/weights`. |
-| `anchorRecon` | LoMa and its backbone weights, loaded through the bundled matcher and its model cache. |
-| `splatting` | RoMaV2/backbone weights for dense initialization, plus the SkyRemoval ONNX model. |
-
-For sky removal, provide `splatting/submodules/SkyRemoval/model/model.onnx`, or pass `--sky-model /path/to/model.onnx` to the root launcher. See [SkyRemoval's instructions](splatting/submodules/SkyRemoval/README.md) for its model download workflow.
-
-Allow network access for initial model downloads, or populate the model directories and caches before running offline. When moving the repository, ensure that weight files are present and that any symbolic links point to valid files.
-
-### Configure the launcher
+### Activate the environment
 
 Activate the shared environment before invoking the launcher:
 
 ```bash
 conda activate skyanchor
 cd "$SKYANCHOR_ROOT"
+unset AG_PYTHON POSE_PYTHON SPLATTING_PYTHON RUNNER_PYTHON
 ./run_skyanchor.sh --help
 ```
 
-By default, all stages use the Python interpreter running the launcher, so activating `skyanchor` selects it for the entire pipeline. No user-specific environment paths are built into the launcher.
+The launcher uses the active environment for every stage. The `unset` command clears any interpreter overrides from earlier installations. In a new shell, set `SKYANCHOR_ROOT` to your repository path again.
 
-If you previously exported interpreter overrides, clear them to use the active environment:
-
-```bash
-unset AG_PYTHON POSE_PYTHON SPLATTING_PYTHON RUNNER_PYTHON
-```
-
-For explicit configuration, point every stage to the same interpreter:
-
-```bash
-export AG_PYTHON="$(command -v python)"
-export POSE_PYTHON="$AG_PYTHON"
-export SPLATTING_PYTHON="$AG_PYTHON"
-```
-
-The `--ag-python`, `--pose-python`, and `--splatting-python` options override these defaults when needed. `RUNNER_PYTHON` selects the root orchestration interpreter and consequently the default interpreter for all stages.
-
-For an existing compatible `skyanchor` environment, add the missing pip dependencies in step 3 without changing PyTorch, torchvision, or CUDA. Keep working CUDA extensions; rebuild them only if they are missing or incompatible. Finish jobs using the environment before changing installed packages.
 
 ## Data preparation
 
@@ -316,7 +260,7 @@ The values are `[fx, fy, cx, cy]`; replace the example with your calibration. Th
 
 ## Run the complete pipeline
 
-From the repository root, with the interpreter variables configured above:
+With `skyanchor` activated, run from the repository root:
 
 ```bash
 export SCENE=/path/to/data/my_scene
@@ -326,24 +270,19 @@ export SCENE=/path/to/data/my_scene
   --aerial-images "$SCENE/aerial/images" \
   --aerial-model "$SCENE/aerial/sparse/0" \
   --intrinsics "$SCENE/intrinsics.yaml" \
-  --submap-size 100 \
+  --submap-size 50 \
   --anchor-front 6 --anchor-back 6 \
   --downsampling 1 \
   --num-keypoints 6000 \
-  --aerial-stage-iterations 30000 \
-  --ground-stage-iterations 30000 \
-  --joint-finetune-iterations 40000 \
   --output outputs/my_scene \
   --headless
 ```
 
-The launcher performs input validation, AG reconstruction, anchor conversion, ground reconstruction, and splatting in sequence. Splatting automatically prepares images, sky masks, and pair files before training.
+Training defaults to **100k iterations: 30k aerial, 30k ground, and 40k joint**. Aerial and ground Gaussians are trained independently with the same optimization settings; the aerial model is cached and excluded from ground training and rendering. The joint stage merges both models, reinitializes their scales and opacities, and optimizes all parameters without densification, pruning, or periodic opacity resets.
 
-The default training schedule is 30,000 aerial iterations, 30,000 ground iterations, and 40,000 joint iterations. This totals **100,000 iterations**. In both the aerial and ground stages, densification runs within the stage-local 2,000–20,000 iteration window, with a densification interval of 300 and an opacity reset interval of 6,000. The ground window therefore corresponds to global iterations 32,000–50,000. The existing strict window boundaries and post-reset recovery checks still apply. Dense initialization uses RoMaV2. The launcher enables the training/evaluation view split with `--eval`.
+To change stage lengths, use `--aerial-stage-iterations`, `--ground-stage-iterations`, and `--joint-finetune-iterations`.
 
-Always supply the four input paths for your scene. The launcher's built-in paths target a development dataset layout and are not a downloadable example dataset. Relative paths are resolved from the directory where you invoke the launcher.
-
-### Park layout example
+### Horizon-GS Park Scene example
 
 For a Park dataset with aerial images nested under `aerial/images/images` and its reference model under `aerial/images/sparse/0`:
 
@@ -355,7 +294,7 @@ export PARK=/path/to/data/park
   --aerial-images "$PARK/aerial/images/images" \
   --aerial-model "$PARK/aerial/images/sparse/0" \
   --intrinsics "$PARK/intrinsics.yaml" \
-  --submap-size 100 \
+  --submap-size 50 \
   --downsampling 1 \
   --num-keypoints 6000 \
   --output outputs/park \
@@ -364,35 +303,6 @@ export PARK=/path/to/data/park
 
 The extra `images` directory is part of this dataset layout; it is not required for other scenes.
 
-### Gaussian initialization and stage defaults
-
-All initialization paths use the same local-spacing rule, including newly triangulated RoMaV2 points, cached dense PLY files, and ground points added in stage 2:
-
-```text
-initial_scale = init_scale_factor * sqrt(mean squared distance to the three nearest neighbors)
-```
-
-The default `init_scale_factor` is **1.0**, and `init_opacity` is **0.1**. These follow the point-cloud initialization in the `gslarge` reference implementation. There is no camera-distance scaling or additional hidden scale reduction. Set `--init_scale_factor` and `--init_opacity` on the direct `splatting/train.py` entry point to override them. The former `--scaling_factor` option has been removed because it mixed camera-distance and nearest-neighbor conventions.
-
-| Setting | Default |
-| --- | --- |
-| Aerial / ground / joint iterations | 30,000 / 30,000 / 40,000 |
-| Optimizer | Adam (`--optimizer_type default`); Sparse Adam remains available |
-| Position learning rate | 0.000016 → 0.0000016, multiplied by the scene spatial scale |
-| Position decay | Restart at each stage; decay over that stage's length |
-| DC / higher-order SH learning rate | 0.0025 / 0.00025 |
-| Opacity / scale / rotation learning rate | 0.025 / 0.001 / 0.001 |
-| Split distance / opacity reduction | 0.15 / 0.95 |
-| Aerial and ground densification windows | Stage-local 2,000–20,000 |
-| Joint densification window | Stage-local 5,000–25,000 |
-| Densification / opacity reset interval | 300 / 6,000 stage-local iterations |
-| Gaussian budgets: aerial / ground / joint | 8M / 15M / 18M, including frozen Gaussians |
-
-The optimizer and splitting defaults use `gslarge` as a reference, while SkyAnchor retains its three-stage schedule, point filtering, masks, and scene-appropriate budgets. Its stage-1/2 densification windows are intentionally kept at 2,000–20,000. The reference's camera-distance initialization, disabled densification threshold, and optimizer update throttling are not used.
-
-Stage 1 trains aerial Gaussians on aerial views. Stage 2 adds ground Gaussians and trains on ground views while protecting aerial parameters from gradients and optimizer momentum, including after densification replaces tensors. Stage 3 unfreezes all Gaussians and trains on both view sets. Optimizer updates run every iteration, and checkpoints are saved after the update.
-
-`training_config.json` in the training output records the resolved command-line configuration. For fixed-view metrics, supply evaluation steps with the direct training entry point, for example `--test_iterations 7000 30000 60000 100000`; the progress-bar PSNR is a moving statistic over sampled training views.
 
 ### Execution options
 
@@ -400,12 +310,12 @@ Append these options to a complete scene command:
 
 | Option | Behavior |
 | --- | --- |
+| `--dry-run` | Print stage commands without launching jobs or creating outputs. |
 | `--pose-only` | Run through final ground reconstruction and skip splatting. |
 | `--headless` | Disable the pose viewer and exit after computation. |
 | `--exit-after-export` | Show the pose viewer during reconstruction, then close it after export. |
 | `--viewer-port 8090` | Set the pose viewer port. |
 | `--gt-model /path/to/model` | Add an optional ground-truth overlay to the pose viewer. |
-| `--dry-run` | Print stage commands without computing or creating output directories. |
 | `--splatting-prepare-only` | Stop the splatting stage after preparing inputs; earlier reconstruction stages still run. |
 | `--splatting-init sparse` | Initialize Gaussians from the exported sparse SfM points instead of RoMaV2 dense initialization. |
 | `--skip-sky-removal` | Disable generation of new sky masks. |
@@ -413,7 +323,6 @@ Append these options to a complete scene command:
 
 Without `--headless`, the anchor-pose viewer is available at `http://localhost:8090`. In a full pipeline run, it exits after pose export so training can start. In `--pose-only` mode, it remains online until interrupted unless `--exit-after-export` is supplied.
 
-`--dry-run` displays placeholders for intrinsics that are resolved during validation. It is a command preview, not a dependency or data-integrity test.
 
 ## Reuse intermediate results
 
@@ -428,7 +337,7 @@ Use `--ag-model` to skip AG reconstruction while rerunning anchor conversion and
   --aerial-model "$SCENE/aerial/sparse/0" \
   --intrinsics "$SCENE/intrinsics.yaml" \
   --ag-model outputs/my_scene/ag/sfm_outputs/rec \
-  --submap-size 100 --anchor-front 6 --anchor-back 6 \
+  --submap-size 50 --anchor-front 6 --anchor-back 6 \
   --downsampling 1 --num-keypoints 6000 \
   --output outputs/my_scene_reuse_ag \
   --headless
@@ -439,16 +348,12 @@ The AG model must contain all required anchors for the same ground sequence and 
 ### Train from a completed SkyAnchor reconstruction
 
 ```bash
-./run_skyanchor.sh \
-  --splatting-only outputs/my_scene \
-  --output outputs/my_scene_gs \
-  --aerial-stage-iterations 30000 \
-  --ground-stage-iterations 30000 \
-  --joint-finetune-iterations 40000 \
-  --headless
+./run_skyanchor.sh --splatting-only outputs/my_scene --output outputs/my_scene_gs
 ```
 
 The input run must contain `run.json` and `ground/final_ba_colmap`. Original image and aerial model paths referenced by the run must remain accessible. This starts a new training run; it does not resume a Gaussian optimization checkpoint.
+
+The equivalent shortcut is `bash splatting/test.sh outputs/my_scene --output outputs/my_scene_gs`. Both commands use the default 30k/30k/40k schedule; no pose viewer is launched in splatting-only mode.
 
 To prepare and inspect the training inputs without optimization:
 
@@ -480,7 +385,7 @@ python reconstruct_ag.py \
   --data_output_dir "$AG_OUT" \
   --cache_dir "$AG_OUT/cache_dir" \
   --conf sp-mast3r-dense \
-  --submap_im_num 100 \
+  --submap_im_num 50 \
   --anchor_num_pair 6 6 \
   --verbose 0
 ```
@@ -498,7 +403,7 @@ python tools/export_ag_anchors.py \
   --intrinsics "$SCENE/intrinsics.yaml" \
   --output "$AG_OUT/submap_anchors.txt" \
   --manifest "$AG_OUT/handoff.json" \
-  --submap-size 100 --anchor-front 6 --anchor-back 6 \
+  --submap-size 50 --anchor-front 6 --anchor-back 6 \
   --downsampling 1
 ```
 
@@ -566,22 +471,11 @@ cd "$SKYANCHOR_ROOT/splatting"
 python train.py \
   --skyanchor_run "$SKYANCHOR_ROOT/outputs/my_scene" \
   -m "$SKYANCHOR_ROOT/outputs/my_scene_gs_direct" \
-  --data_device cpu --eval \
-  --aerial_stage_iterations 30000 \
-  --ground_stage_iterations 30000 \
-  --joint_finetune_iterations 40000 \
+  --eval \
   --dense_init_ply_name dense_v2.ply
 ```
 
 Add `--prepare_only` to generate the prepared dataset without training. Other direct options include `--skip_sky_removal`, `--mask_aerial`, `--sky_model /path/to/model.onnx`, and `--pair_workers 8`.
-
-The preparation step:
-
-1. Reads the aerial reference and final ground COLMAP models.
-2. Copies and resizes images to match their camera dimensions, preserving camera/point IDs and tracks.
-3. Writes PNG images and updates the corresponding COLMAP filenames.
-4. Uses SkyRemoval and `apply_sky_mask.py` to convert RGB ground images to RGBA with zero alpha for sky pixels; existing alpha channels are preserved.
-5. Generates or validates pair files for dense initialization.
 
 Prepared files are stored inside the training output. Original images and input models are not modified. Aerial images are not sky-masked by default; use `--mask_aerial` with the direct training entry point to enable this.
 
@@ -590,22 +484,18 @@ Prepared files are stored inside the training output. Original images and input 
 For manually prepared data, each source directory must contain an image directory and `sparse/0`. The aerial and ground models must already share the same world coordinate frame and scale.
 
 ```bash
+conda activate skyanchor
+cd "$SKYANCHOR_ROOT/splatting"
+
 python train.py \
   -s /path/to/aerial_source \
-  --images images \
   --ground_source_path /path/to/ground_source \
-  --ground_images images_masked \
-  --pair_file /path/to/aerial_source/pair.txt \
-  --ground_pair_file /path/to/ground_source/pair.txt \
   -m /path/to/new_training_output \
-  --data_device cpu --eval \
-  --aerial_stage_iterations 30000 \
-  --ground_stage_iterations 30000 \
-  --joint_finetune_iterations 40000 \
+  --eval \
   --dense_init_ply_name dense_v2.ply
 ```
 
-`images_masked` is an example directory name; point `--ground_images` to the actual ground images. Pair-file arguments can be omitted to generate pairs automatically. This interface is also suitable for results produced by running modules A–C independently, since those commands do not create a root pipeline `run.json`. Place the final ground model under the ground source's `sparse/0` before training.
+Both sources use `images/` by default; override with `--images` and `--ground_images` when needed. Matching pairs and ground sky masks are generated automatically, and existing image alpha masks are preserved. Optional `--pair_file` and `--ground_pair_file` arguments accept existing pair files. This interface also supports modules A–C run independently: place the final ground model under the ground source's `sparse/0` before training.
 
 To generate pairs separately:
 
@@ -664,45 +554,7 @@ outputs/my_scene/
         └── iteration_100000/point_cloud.ply
 ```
 
-The checkpoint directories above correspond to the default training schedule; additional saves may be present. Skipped stages do not produce their corresponding logs and artifacts.
-
-Logs are streamed to the terminal and saved per stage. To inspect training progress:
-
-```bash
-tail -f outputs/my_scene/logs/05_splatting.log
-```
-
-A failed stage stops the pipeline with a nonzero exit code and leaves completed outputs and logs available for inspection. Reuse a completed AG model with `--ag-model`, or a completed reconstruction with `--splatting-only`. These options reuse stage outputs; they do not resume an interrupted optimizer.
-
-## Troubleshooting
-
-| Problem | What to check |
-| --- | --- |
-| A module imports packages from the wrong environment | Set `AG_PYTHON`, `POSE_PYTHON`, and `SPLATTING_PYTHON` explicitly. Run standalone commands from the module directory. |
-| `pycolmap` reports a missing attribute or incompatible signature | Check the source build described under installation; a different release may expose a different API. |
-| Rasterizer import errors, undefined symbols, or unexpected arguments | Rebuild the bundled CUDA extensions in `skyanchor` using the active PyTorch/CUDA combination. |
-| Missing anchors or inconsistent submap boundaries | Match the ground image set, ordering, submap size, and front/back anchor counts used by AG reconstruction. |
-| Missing aerial images | Verify that every registered COLMAP image name resolves under `--aerial-images`. |
-| Incorrect camera projection after resizing | Supply original-resolution intrinsics to the root launcher. For standalone pose reconstruction, supply the correctly scaled focal length and principal point. |
-| Sky-mask model cannot be loaded | Check that `model.onnx` is a valid downloaded model and any symlink resolves. Use `--sky-model` to select it explicitly. |
-| Training cannot initialize from the ground result | Use the final BA model with points and observations, not `online_colmap`. |
-| Preparation rejects an existing cache | Use a new output directory after changing images, models, masks, or preparation settings. |
-| The process stays alive after pose export | In pose-only mode, the viewer intentionally remains open. Use `--headless` or `--exit-after-export`. |
-| Out-of-memory during reconstruction or training | Reduce image resolution with a larger `--downsampling` value. `--data_device cpu` reduces image-storage pressure but does not eliminate GPU computation. |
-
-## Development checks
-
-Run the suites separately in the shared `skyanchor` environment:
-
-```bash
-conda activate skyanchor
-cd "$SKYANCHOR_ROOT"
-python -m pip install pytest
-PYTHONPATH="$SKYANCHOR_ROOT/anchorRecon" python -m pytest -q anchorRecon/tests/test_pose_pipeline.py
-python -m pytest -q splatting/tests
-```
-
-These checks cover anchor/model handoff, input preparation, Gaussian initialization, stage scheduling, parameter freezing, and camera projection. They do not replace a full reconstruction or training run on your own scene.
+With the default schedule, `iteration_30000` contains only aerial Gaussians, `iteration_60000` contains only ground Gaussians, and `iteration_100000` contains the merged model. Additional saves may be present. Skipped stages do not produce their corresponding logs and artifacts.
 
 ## Third-party components
 

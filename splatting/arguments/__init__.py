@@ -100,37 +100,17 @@ class OptimizationParams(ParamGroup):
         self.rotation_lr = 0.001
         self.percent_dense = 0.001
         self.lambda_dssim = 0.2
-        self.densification_interval = 300
-        self.opacity_reset_interval = 6000
+        self.densification_interval = 600
+        self.opacity_reset_interval = 9000
+        self.opacity_reset_max = 0.01
         self.densify_from_iter = 2000
         self.densify_until_iter = 20000
         self.densify_grad_threshold = 0.00016
-        # Negative stage overrides inherit the corresponding global setting.
-        self.stage1_budget = 8000000
-        self.stage2_budget = 15000000
-        self.stage3_budget = 18000000
-        self.stage1_densification_interval = 300
-        self.stage1_opacity_reset_interval = 6000
-        self.stage1_densify_grad_threshold = 0.00016
-        # Aerial and ground windows use stage-local iteration offsets.
-        self.stage1_densify_from = 2000
-        self.stage1_densify_until = 20000
-        self.stage2_densification_interval = -1
-        self.stage2_opacity_reset_interval = -1
-        self.stage2_densify_grad_threshold = -1.0
-        self.stage2_densify_from = 2000
-        self.stage2_densify_until = 20000
-        self.stage3_densification_interval = -1
-        self.stage3_opacity_reset_interval = -1
-        self.stage3_densify_grad_threshold = -1.0
-        self.stage3_densify_from = 5000
-        # Joint-stage end offset; 0 uses the full joint stage.
-        self.stage3_densify_until = 25000
         self.densify_debug = False
         self.cull_opacity = 0.005
         self.random_background = False
         self.optimizer_type = "default"
-        self.budget = 19000000
+        self.budget = 8000000
         self.split_distance = 0.15
         self.opacity_reduction = 0.95
 
@@ -160,8 +140,6 @@ class OptimizationParams(ParamGroup):
         self.aerial_stage_iterations = 30000
         self.ground_stage_iterations = 30000
         self.ground_start_iter = 30000
-        self.ground_densify_after = 2000
-        self.ground_densify_duration = 18000
         self.joint_finetune_iterations = 40000
 
         super().__init__(parser, "Optimization Parameters")
