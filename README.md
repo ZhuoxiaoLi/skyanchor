@@ -3,7 +3,7 @@
 **SIGGRAPH Asia 2026** · [Paper (arXiv)](https://arxiv.org/abs/2609.13903) · [PDF](https://arxiv.org/pdf/2609.13903)
 ![img](assets/teaser3.jpg)
 **Preview version.** This repository provides an early release of SkyAnchor, organized into three components: aerial–ground anchor registration (`agRecon`), ground pose reconstruction (`anchorRecon`), and Gaussian Splatting (`splatting`). The preview includes the updates described below; further reconstruction speed improvements are planned for the final release.
-
+![img](assets/atdemo.jpg)
 SkyAnchor connects aerial and ground imagery through anchor poses, reconstructs a ground image sequence in the aerial reference frame, and trains a joint aerial–ground 3D Gaussian Splatting model.
 
 The pipeline has three modules:
