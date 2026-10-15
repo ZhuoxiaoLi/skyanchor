@@ -185,15 +185,11 @@ python -m pip install --no-build-isolation ./splatting/submodules/fused-ssim
 
 ### Model weights
 
-Python packages and pretrained model weights are separate dependencies.
-
-The repository weight bundle is distributed separately from Git:
-
 | File | Description |
 | --- | --- |
 | `skyanchor_weights.zip` | 10 weight files; **13.59 GiB** compressed and **14.64 GiB** extracted. |
 
-To install the separately distributed repository weights, download `skyanchor_weights.zip` into the repository root and extract it there:
+To install the separately distributed repository weights, download  [`skyanchor_weights.zip`](https://huggingface.co/datasets/lizhuoxiao951005/SkyAnchor_weights) into the repository root and extract it there:
 
 ```bash
 cd /path/to/sky_anchor
@@ -284,7 +280,7 @@ To change stage lengths, use `--aerial-stage-iterations`, `--ground-stage-iterat
 
 ### Horizon-GS Park Scene example
 
-For a Park dataset with aerial images nested under `aerial/images/images` and its reference model under `aerial/images/sparse/0`:
+For a Park dataset with aerial images nested under `aerial/images/images` and its reference model under `aerial/images/sparse/0`: [`download park.zip`](https://huggingface.co/datasets/lizhuoxiao951005/SkyAnchor_weights)
 
 ```bash
 export PARK=/path/to/data/park
