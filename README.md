@@ -1,6 +1,6 @@
 # SkyAnchor: Updating Metric-scale Aerial 3D Gaussian Scenes from Unposed Ground-View Sequences
 
-**SIGGRAPH Asia 2026** · [Paper (arXiv)](https://arxiv.org/abs/2609.13903) · [PDF](https://arxiv.org/pdf/2609.13903)
+**SIGGRAPH Asia 2026** · [Paper (arXiv)](https://arxiv.org/abs/2609.13903) · [PDF](https://arxiv.org/pdf/2609.13903) · [`Weights`](https://huggingface.co/datasets/lizhuoxiao951005/SkyAnchor_weights) ·[`Example Data`](https://huggingface.co/datasets/lizhuoxiao951005/SkyAnchor_weights)
 ![img](assets/teaser3.jpg)
 **Preview version.** This repository provides an early release of SkyAnchor, organized into three components: aerial–ground anchor registration (`agRecon`), ground pose reconstruction (`anchorRecon`), and Gaussian Splatting (`splatting`). The preview includes the updates described below; further reconstruction speed improvements are planned for the final release.
 ![img](assets/atdemo.jpg)
