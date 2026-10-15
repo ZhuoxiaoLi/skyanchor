@@ -294,14 +294,15 @@ def compute_densify_window_and_params(
     stage2_active: bool,
     stage3_active: bool,
 ):
-    """Use shared stage-local schedules; joint training has no density updates."""
+    """Use the same stage-local density schedule for all training stages."""
     if stage3_active:
-        return int(total_iterations), int(total_iterations), 0, 0, 0.0
-
-    offset = int(ground_start_iter) if stage2_active and has_ground else 0
-    stage_end = int(opt.iterations)
-    if has_ground and ground_start_iter > 0:
-        stage_end = int(opt.iterations) if stage2_active else int(ground_start_iter)
+        offset = int(opt.iterations)
+        stage_end = int(total_iterations)
+    else:
+        offset = int(ground_start_iter) if stage2_active and has_ground else 0
+        stage_end = int(opt.iterations)
+        if has_ground and ground_start_iter > 0:
+            stage_end = int(opt.iterations) if stage2_active else int(ground_start_iter)
     return (offset + int(opt.densify_from_iter),
             min(offset + int(opt.densify_until_iter), stage_end),
             int(opt.densification_interval), int(opt.opacity_reset_interval),
@@ -493,7 +494,6 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, debug_fr
             gaussians.merge_cached_parameters(
                 aerial_cache, opt, dataset.init_scale_factor, dataset.init_opacity,
             )
-            joint_num_gaussians = len(gaussians.get_xyz)
             aerial_cache = None
             gaussians.configure_position_schedule(opt, joint_finetune_iters)
             all_cameras_combined = list(scene.getTrainCameras()) + list(ground_cameras)
@@ -511,9 +511,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, debug_fr
 
             print(f"\n{'='*60}")
             print(f"[Stage3] Joint finetune started at iter {iteration}")
-            print(f"[Stage3] All Gaussians trainable: {joint_num_gaussians}")
+            print(f"[Stage3] All Gaussians trainable: {len(gaussians.get_xyz)}")
             print(f"[Stage3] Scale reset to merged RMS-3NN * {dataset.init_scale_factor:g}; opacity={dataset.init_opacity:g}")
-            print("[Stage3] Fixed Gaussian count; no densification, pruning, or periodic opacity resets")
+            print("[Stage3] Densification, pruning, and opacity resets use the shared stage-local settings")
             print(f"[Stage3] Combined cameras: {len(all_cameras_combined)} "
                   f"(aerial {len(scene.getTrainCameras())} + ground {len(ground_cameras)})")
             print(f"[Stage3] Will run for {joint_finetune_iters} iterations "
@@ -653,9 +653,6 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, debug_fr
                 if o_int > 0 and stage_iteration % o_int == 0:
                     gaussians.reset_opacity(opt.opacity_reset_max)
                     print(f"[Opacity reset] iter={iteration} max_opacity={opt.opacity_reset_max:g}", flush=True)
-
-            if stage3_active and len(gaussians.get_xyz) != joint_num_gaussians:
-                raise RuntimeError("The Gaussian count changed during joint training")
 
             prune_cumulative += prn_this
             split_cumulative += split_this

@@ -278,7 +278,7 @@ export SCENE=/path/to/data/my_scene
   --headless
 ```
 
-Training defaults to **100k iterations: 30k aerial, 30k ground, and 40k joint**. Aerial and ground Gaussians are trained independently with the same optimization settings; the aerial model is cached and excluded from ground training and rendering. The joint stage merges both models, reinitializes their scales and opacities, and optimizes all parameters without densification, pruning, or periodic opacity resets.
+Training defaults to **100k iterations: 30k aerial, 30k ground, and 40k joint**. Aerial and ground Gaussians are trained independently with the same optimization settings; the aerial model is cached and excluded from ground training and rendering. The joint stage merges both models, reinitializes their scales and opacities, and optimizes all parameters. All three stages use the same stage-local densification and pruning schedule: iterations 2k–20k, every 600 steps, with an opacity reset cap of 0.01 every 9k steps and a pruning threshold of 0.005. The shared 12-million-Gaussian budget limits new splits; merging larger models does not force them down to that count.
 
 To change stage lengths, use `--aerial-stage-iterations`, `--ground-stage-iterations`, and `--joint-finetune-iterations`.
 

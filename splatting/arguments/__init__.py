@@ -110,7 +110,7 @@ class OptimizationParams(ParamGroup):
         self.cull_opacity = 0.005
         self.random_background = False
         self.optimizer_type = "default"
-        self.budget = 8000000
+        self.budget = 12000000
         self.split_distance = 0.15
         self.opacity_reduction = 0.95
 

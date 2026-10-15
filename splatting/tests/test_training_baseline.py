@@ -21,11 +21,26 @@ def test_three_stage_windows():
     opt = options()
     apply_explicit_aerial_ground_length(opt, Namespace(ground_source_path='ground'))
     assert (opt.ground_start_iter, opt.iterations, opt.joint_finetune_iterations) == (30000, 60000, 40000)
-    for s2, s3, expected in [(False, False, (2000, 20000)), (True, False, (32000, 50000)), (True, True, (100000, 100000))]:
+    for s2, s3, expected in [(False, False, (2000, 20000)), (True, False, (32000, 50000)), (True, True, (62000, 80000))]:
         result = compute_densify_window_and_params(opt, has_ground=True, ground_start_iter=30000, total_iterations=100000, stage2_active=s2, stage3_active=s3)
         assert result[:2] == expected
-        assert result[2:4] == ((0, 0) if s3 else (600, 9000))
-    assert opt.budget == 8000000
+        assert result[2:] == (600, 9000, opt.densify_grad_threshold)
+    assert opt.budget == 12000000
+
+
+def test_custom_joint_schedule_uses_shared_settings_and_stops_at_stage_end():
+    opt = options()
+    opt.aerial_stage_iterations, opt.ground_stage_iterations = 31003, 29004
+    opt.joint_finetune_iterations = 12000
+    opt.densification_interval, opt.opacity_reset_interval = 300, 6000
+    opt.densify_from_iter, opt.densify_until_iter = 1000, 15000
+    opt.densify_grad_threshold = .0002
+    apply_explicit_aerial_ground_length(opt, Namespace(ground_source_path='ground'))
+    result = compute_densify_window_and_params(
+        opt, has_ground=True, ground_start_iter=opt.ground_start_iter,
+        total_iterations=opt.iterations + opt.joint_finetune_iterations,
+        stage2_active=False, stage3_active=True)
+    assert result == (61007, 72007, 300, 6000, .0002)
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA initialization required')
@@ -284,7 +299,7 @@ def test_densification_sampling_covers_the_sequence_and_keeps_edges_paired():
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA training required')
-def test_aerial_and_ground_use_identical_training_updates(monkeypatch):
+def test_aerial_ground_parity_and_joint_density_updates(monkeypatch):
     import train
     from scene.cameras import Camera
     xyz = np.array([[center + x, y, 2.] for center in [0., 5.]
@@ -329,19 +344,53 @@ def test_aerial_and_ground_use_identical_training_updates(monkeypatch):
     monkeypatch.setattr(train, 'load_ground_point_cloud', lambda *args: pcd)
     monkeypatch.setattr(train, 'training_report', lambda *args, **kwargs: None)
     monkeypatch.setattr(train, 'randint', lambda a, b: a)
+    joint_models, density_events, reset_events = [], [], []
+    merge = GaussianModel.merge_cached_parameters
+    densify = GaussianModel.densify_and_prune_Improved
+    reset = GaussianModel.reset_opacity
+    def merge_with_low_opacity_points(model, *args, **kwargs):
+        merge(model, *args, **kwargs)
+        joint_models.append(model)
+        with torch.no_grad():
+            model._opacity[:10].fill_(np.log(.001 / .999))
+    def record_density_update(model, scores, min_opacity, budget, opt, iteration):
+        if model in joint_models:
+            # Controlled gradients make splitting deterministic after the first prune.
+            model.xyz_gradient_accum.fill_(1.)
+            model.denom.fill_(1.)
+        stats = densify(model, scores, min_opacity, budget, opt, iteration)
+        if model in joint_models:
+            density_events.append((iteration, stats, len(model.get_xyz)))
+        return stats
+    def record_reset(model, max_opacity=.01):
+        reset(model, max_opacity)
+        if model in joint_models:
+            reset_events.append(max_opacity)
+    monkeypatch.setattr(GaussianModel, 'merge_cached_parameters', merge_with_low_opacity_points)
+    monkeypatch.setattr(GaussianModel, 'densify_and_prune_Improved', record_density_update)
+    monkeypatch.setattr(GaussianModel, 'reset_opacity', record_reset)
     opt = options()
     opt.aerial_stage_iterations = opt.ground_stage_iterations = 4
-    opt.joint_finetune_iterations = 2
-    opt.densify_from_iter, opt.densify_until_iter = 0, 4
+    opt.joint_finetune_iterations = 6
+    opt.densify_from_iter, opt.densify_until_iter = 0, 6
     opt.densification_interval, opt.opacity_reset_interval = 2, 3
     opt.budget = len(xyz)
     dataset = Namespace(sh_degree=3, ground_source_path='ground', ground_images='images',
                         white_background=False, init_scale_factor=1., init_opacity=.1)
     pipe = Namespace(debug=False, compute_cov3D_python=False, convert_SHs_python=False, separate_sh=True)
-    train.training(dataset, opt, pipe, [], [4, 8, 9, 10], -1, False, Namespace(cams=1))
+    train.training(dataset, opt, pipe, [], [4, 8, 9, 10, 11, 12, 14], -1, False, Namespace(cams=1))
     for name in GaussianModel.parameter_names + ('gradient_accum', 'denom'):
         torch.testing.assert_close(saved[4][name], saved[8][name], rtol=1e-5, atol=1e-7)
     for name in saved[4]['moments']:
         for key in saved[4]['moments'][name]:
             torch.testing.assert_close(saved[4]['moments'][name][key], saved[8]['moments'][name][key], rtol=1e-5, atol=1e-7)
-    assert len(saved[9]['_xyz']) == len(saved[10]['_xyz']) == 2 * len(xyz)
+    assert len(saved[9]['_xyz']) == 2 * len(xyz)
+    assert density_events == [(2, {'split': 0, 'pruned': 10}, 6),
+                              (4, {'split': 2, 'pruned': 0}, 8)]
+    assert reset_events == [.01]
+    assert len(saved[10]['_xyz']) == 6
+    assert len(saved[12]['_xyz']) == len(saved[14]['_xyz']) == 8
+    assert saved[11]['_opacity'].sigmoid().max() <= .010001
+    assert not torch.equal(saved[12]['_features_dc'], saved[14]['_features_dc'])
+    for name in GaussianModel.parameter_names:
+        assert torch.isfinite(saved[14][name]).all()
