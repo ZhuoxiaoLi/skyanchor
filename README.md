@@ -59,22 +59,7 @@ For the final release, we plan to improve reconstruction speed in two areas:
 
 ### Prerequisites
 
-Our reference system uses Ubuntu 22.04 and an NVIDIA RTX PRO 6000 Blackwell GPU with 96 GB of memory. Building the splatting extensions requires a CUDA 12.8 toolkit, a compatible C++ compiler, and Ninja. All three modules use the same `skyanchor` Conda environment.
-
-| Component | Shared `skyanchor` environment |
-| --- | --- |
-| Python | 3.12 |
-| PyTorch / torchvision | 2.7.0 / 0.22.0 |
-| PyTorch CUDA build | 12.8 |
-| NumPy / SciPy | 2.4.6 / 1.15.2 |
-| OpenCV / Pillow | 4.11.0.86 / 11.3.0 |
-| COLMAP Python bindings | Project-compatible `3.12.0.dev0` source build |
-| PyCeres | 2.5 |
-| Viser | 0.2.7 |
-| ONNX Runtime | 1.24.4 |
-| ONNX / ml_dtypes / protobuf | 1.20.1 / 0.5.3 / 4.25.8 |
-| Local components | LoMa, the AG third-party models, RoMaV2, SkyRemoval, and three CUDA extensions |
-
+Our reference system uses Ubuntu 22.04 and an NVIDIA RTX PRO 6000 Blackwell GPU with 96 GB of memory.
 
 Run the installation commands from the repository root unless a different working directory is shown:
 
@@ -306,16 +291,13 @@ Append these options to a complete scene command:
 
 | Option | Behavior |
 | --- | --- |
-| `--dry-run` | Print stage commands without launching jobs or creating outputs. |
 | `--pose-only` | Run through final ground reconstruction and skip splatting. |
-| `--headless` | Disable the pose viewer and exit after computation. |
 | `--exit-after-export` | Show the pose viewer during reconstruction, then close it after export. |
 | `--viewer-port 8090` | Set the pose viewer port. |
 | `--gt-model /path/to/model` | Add an optional ground-truth overlay to the pose viewer. |
 | `--splatting-prepare-only` | Stop the splatting stage after preparing inputs; earlier reconstruction stages still run. |
 | `--splatting-init sparse` | Initialize Gaussians from the exported sparse SfM points instead of RoMaV2 dense initialization. |
 | `--skip-sky-removal` | Disable generation of new sky masks. |
-| `--scene-scale 1` | Preserve the aerial coordinate scale; another positive value scales the reconstruction and training inputs consistently. |
 
 Without `--headless`, the anchor-pose viewer is available at `http://localhost:8090`. In a full pipeline run, it exits after pose export so training can start. In `--pose-only` mode, it remains online until interrupted unless `--exit-after-export` is supplied.
 
